@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TupleSections #-}
 module Main where
 
 import qualified Data.Map as Map
@@ -8,8 +10,7 @@ import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.State
 
-import qualified Text.PrettyPrint as PP
-
+import Debug.Trace
 
 data Exp = EVar String
          | ELit Lit
@@ -28,9 +29,9 @@ data Type = TVar String
           | TFun Type Type
          deriving (Eq,Ord,Show)
 
-data Scheme = Scheme [String] Type -- ∀ᾱ.τ
+data Scheme = Scheme [String] Type deriving (Show)
 type Subst = Map String Type
-newtype TypeEnv = TypeEnv (Map String Scheme)
+newtype TypeEnv = TypeEnv (Map String Scheme) deriving (Show)
 
 class Types a where
   ftv :: a -> Set String
@@ -50,7 +51,8 @@ instance Types Type where
 
 instance Types Scheme where
   ftv (Scheme forall t) = (ftv t) \\ (Set.fromList forall)
-  apply s (Scheme forall t) = Scheme forall (apply (foldr Map.delete s forall) t)
+  apply s (Scheme forall t) =
+    Scheme forall (apply (foldr Map.delete s forall) t)
 
 instance Types a => Types [a] where
   ftv l = foldr Set.union Set.empty (map ftv l)
@@ -74,18 +76,33 @@ generalize :: TypeEnv -> Type -> Scheme
 generalize env t = Scheme vars t
   where vars = Set.toList ((ftv t) \\ (ftv env))
 
-
 data TIEnv = TIEnv {}
 data TIState = TIState { tiSupply :: Int,
-                         tiSubst :: Subst} deriving (Show)
+                         tiSubst :: Subst,
+                         tiLogDepth :: Int
+                       } deriving (Show)
 type TI a = ErrorT String (ReaderT TIEnv (StateT TIState IO)) a
+
+
+logDepth :: TI Int
+logDepth = do
+  s <- get
+  return (tiLogDepth s)
+
+nested :: TI a -> TI a
+nested a = push >> a >>= \res -> pop >> return res
+ where pop, push :: TI ()
+       pop = get >>= \s-> put s{tiLogDepth= tiLogDepth s - 1}
+       push = get >>= \s-> put s{tiLogDepth= tiLogDepth s + 1}
 
 runTI :: TI a -> IO (Either String a, TIState)
 runTI t = do
-  (res,st) <- runStateT (runReaderT (runErrorT t) initTIEnv) initTIState
+  (res,st) <- runStateT (runReaderT (runErrorT t)
+                                    initTIEnv)
+              initTIState
   return (res,st)
   where initTIEnv = TIEnv{}
-        initTIState = TIState 0 nullSubst
+        initTIState = TIState 0 nullSubst 0
 
 newTypeVar :: String -> TI Type
 newTypeVar prefix = do
@@ -100,20 +117,29 @@ instantiate (Scheme vars t) = do
   return (apply s t)
 
 mgu :: Type -> Type -> TI Subst
-mgu (TFun l r) (TFun l' r') = do
+mgu (TFun l r) (TFun l' r') = nested $ do
+  tr "MGU Unifiying "  ((TFun l r),  (TFun l' r'))
   s1 <- mgu l l'
+  tr "MGU param types yield subst" s1
+  tr "MGU left body with applied param subst:" (apply s1 r)
+  tr "MGU right body with applied param subst:" (apply s1 r')
   s2 <- mgu (apply s1 r) (apply s1 r')
+  tr "MGU body types yield subst" s2
+  tr "MGU returns composed substitutions" (s1 <.> s2)
   return (s1 <.> s2)
 mgu (TVar u) t = varBind u t
 mgu t (TVar u) = varBind u t
 mgu TInt TInt = return nullSubst
 mgu TBool TBool = return nullSubst
-mgu t1 t2 = throwError $ "types do not unify " ++ show t1 ++ " vs. " ++ show t2
+mgu t1 t2 = throwError $ "types do not unify"
+                       ++ show t1 ++ " vs. " ++ show t2
 
 varBind :: String -> Type -> TI Subst
-varBind u t
+varBind u t = nested $ tr "VARBIND Binding " (u,t) >> go u t where
+ go u t
   | t == TVar u = return nullSubst
-  | u `Set.member` (ftv t) = throwError $ "occurs: " ++ u ++ " vs " ++ show t
+  | u `Set.member` (ftv t) = throwError $ "occurs: "
+                              ++ u ++ " vs " ++ show t
   | otherwise = return $ Map.singleton u t
 
 tiLit :: TypeEnv -> Lit -> TI (Subst,Type)
@@ -126,18 +152,36 @@ ti (TypeEnv env) (EVar n) =
     Nothing -> throwError $ "unbound variable" ++ n
     (Just sigma) -> instantiate sigma >>= \t -> return (nullSubst, t)
 ti env (ELit l) = tiLit env l
-ti env (EAbs n e) = do
+ti env (EAbs n e) = nested $ do
+  tr "TI called with" (EAbs n e)
   tv <- newTypeVar "a"
+  tr "TI Tv =" tv
   let TypeEnv env' = remove env n
-      env'' = TypeEnv (env' `Map.union` (Map.singleton n (Scheme [] tv)))
+      env'' = TypeEnv (env' `Map.union` (Map.singleton
+                                            n (Scheme [] tv)))
+  tr "TI shadowed env" env''
   (s1,t1) <- ti env'' e
+  tr "TI returns type for Abs:" (TFun (apply s1 tv) t1)
+  tr "TI returns subst for Abs:" s1
   return (s1, TFun (apply s1 tv) t1)
-ti env (EApp e1 e2) = do
+
+ti env (EApp e1 e2) = nested $ do
+  tr "TI called with" (env, (EApp e1 e2))
   tv <- newTypeVar "a"
+  tr "TI tv is" tv
   (s1,t1) <- ti env e1
+  tr "TI e1 types: s1,t1 are" (s1,t1)
   (s2,t2) <- ti (apply s1 env) e2
+  tr "TI app s1 env is" (apply s1 env)
+  tr "TI e2 types: s2,t2 are" (s2,t2)
   s3 <- mgu (apply s2 t1) (TFun t2 tv)
+  tr "TI app s2 t1" (apply s2 t1)
+  tr "TI TFun t2 tv" (TFun t2 tv)
+  tr "TI S3" s3
+  tr "TI returns subst" (s3 <.> s2 <.> s1)
+  tr ("TI returns " ++show tv ++ ":") (apply s3 tv)
   return (s3 <.> s2 <.> s1, apply s3 tv)
+
 ti env (ELet x e1 e2) = do
   (s1,t1) <- ti env e1
   let TypeEnv env' = remove env x
@@ -154,11 +198,30 @@ typeInference env e = do
 runInference :: Exp -> IO (Either String Type, TIState)
 runInference exp = runTI (typeInference (Map.empty) exp)
 
+tr :: (Show a) => String -> a -> TI ()
+tr s a = do
+  depth <- logDepth
+  liftIO . traceIO . (prefix depth ++) . clearQuotes . ((s  ++ " ") ++) . show $ a
+ where clearQuotes = filter (/= '"')
+       prefix d = take d (repeat ' ')
+
 exprs :: [Exp]
-exprs = [ ELet "id" (EAbs "x" (EVar "x")) (EVar "id")
-        , ELet "id" (EAbs "x" (EVar "x")) (EApp (EVar "id") (EVar "id"))
-        , EApp (EAbs "x" (EVar "x")) (ELit (LInt 2))
-        ]
+exprs =
+  [
+   EApp (EAbs "x" (EVar "x")) (ELit (LInt 3))
+
+  ]
+        -- ELet "id" (EAbs "x" (EVar "x")) (EVar "id")
+        -- , ELet "id" (EAbs "x" (EVar "x"))
+        --     (EApp (EVar "id") (EVar "id"))
+        -- , EApp (EAbs "x" (EVar "x")) (ELit (LInt 2))
+        -- ]
+
 main = do
-  x <- mapM runInference exprs
-  putStrLn (show (map fst x))
+  x <- mapM (\e -> runInference e >>= return . (e,) ) exprs
+  mapM_ (putStrLn . show) (map (\(e,(t,_)) -> (e,t)) x)
+
+
+
+
+
