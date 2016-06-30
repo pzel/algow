@@ -17,8 +17,11 @@ data Exp = EVar String
          | EApp Exp Exp
          | EAbs String Exp
          | ELet String Exp In Exp
+         | EOp Op Exp Exp
          deriving (Show)
 data In = In deriving (Show)
+
+data Op = And | Or | Add | Mul deriving (Eq,Show)
 
 data Lit = LInt Integer
          | LBool Bool
@@ -136,15 +139,14 @@ mgu (TVar u) t = varBind u t
 mgu t (TVar u) = varBind u t
 mgu TInt TInt = return nullSubst
 mgu TBool TBool = return nullSubst
-mgu t1 t2 = throwError $ "types do not unify"
-                       ++ show t1 ++ " vs. " ++ show t2
+mgu t1 t2 = throwError $ "types do not unify "
+                       ++ show t1 ++ " / " ++ show t2
 
 varBind :: String -> Type -> TI Subst
 varBind u t = nested $ tr "VARBIND Binding " (u,t) >> go u t where
  go u t
   | t == TVar u = return nullSubst
-  | u `Set.member` (ftv t) = throwError $ "occurs: "
-                              ++ u ++ " vs " ++ show t
+  | u `Set.member` (ftv t) = throwError $ u ++ " occurs in ftv of " ++ show t
   | otherwise = return $ Map.singleton u t
 
 tiLit :: TypeEnv -> Lit -> TI (Subst,Type)
@@ -176,15 +178,16 @@ ti env (EApp e1 e2) = nested $ do
   tr "T-APP tv is" tv
   (s1,t1) <- ti env e1
   tr "T-APP e1 types: s1,t1 are" (s1,t1)
-  (s2,t2) <- ti (apply s1 env) e2
   tr "T-APP app s1 env is" (apply s1 env)
+  (s2,t2) <- ti (apply s1 env) e2
   tr "T-APP e2 types: s2,t2 are" (s2,t2)
-  s3 <- mgu (apply s2 t1) (TFun t2 tv)
   tr "T-APP app s2 t1" (apply s2 t1)
   tr "T-APP TFun t2 tv" (TFun t2 tv)
+  s3 <- mgu (apply s2 t1) (TFun t2 tv)
   tr "T-APP S3" s3
   tr "T-APP returns subst" (s3 <.> s2 <.> s1)
   tr ("T-APP returns " ++show tv ++ ":") (apply s3 tv)
+
   return (s3 <.> s2 <.> s1, apply s3 tv)
 
 ti env (ELet x e1 In e2) = nested $ do
@@ -203,6 +206,14 @@ ti env (ELet x e1 In e2) = nested $ do
   tr "T-LET returns subst" (s1 <.> s2)
   tr "T-LET returns type" t2
   return (s1 <.> s2, t2)
+
+ti env (EOp op e1 e2) = nested $ do
+  let opType = if op `elem` [Mul,Add] then TInt else TBool
+  (s1,t1) <- ti env e1
+  (s2,t2) <- ti env e2
+  s3 <- mgu opType t1
+  s4 <- mgu opType t2
+  return (s1 <.> s2 <.> s3 <.> s4 , opType)
 
 typeInference :: Map String Scheme -> Exp -> TI Type
 typeInference env e = do
@@ -225,19 +236,20 @@ exprs =
    ELet "outer" (EAbs "x"
                      (ELet "inner" (EAbs "x" (EVar "x"))
                      In (EApp (EVar "inner") (ELit (LInt 2)))) )
-     In (EApp (EVar "outer") (ELit (LBool True)))
-
+      In (EApp (EVar "outer") (ELit (LBool True)))
+  ,EApp (EAbs "x" (EOp Mul (EVar "x") (ELit (LInt 2)))) (ELit (LBool True))
+  ,EApp (EAbs "x" (EOp Mul (EVar "x") (ELit (LInt 2)))) (ELit (LInt 3))
+  ,EApp (EAbs "x" (EOp Mul (EVar "x") (ELit (LInt 2)))) (ELit (LInt 3))
+  ,EApp (EAbs "x" (EOp And (EVar "x") (ELit (LBool True)))) (ELit (LBool True))
+  ,EApp (EAbs "x" (EOp And (EVar "x") (ELit (LBool True)))) (ELit (LInt 2))
+  ,EAbs "x" (EApp (EVar "x") (EVar "x"))
  ]
-        -- ELet "id" (EAbs "x" (EVar "x")) (EVar "id")
-        -- , ELet "id" (EAbs "x" (EVar "x"))
-        --     (EApp (EVar "id") (EVar "id"))
-        -- , EApp (EAbs "x" (EVar "x")) (ELit (LInt 2))
-        -- ]
+
 
 prettyResult :: (Exp, (Either String Type, TIState)) -> IO ()
 prettyResult (e,(t,st)) = do
-  putStrLn ("\nExpression\n> " ++ show e ++  "\n typed as\n> " ++ show t)
-  putStrLn "Inference log:"
+  putStrLn ("\n\nExpression\n> " ++ show e ++  "\n typed as\n> " ++ show t)
+  putStrLn "\nInference log:"
   mapM_ putStrLn (tiLog st)
 
 main = do
