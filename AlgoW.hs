@@ -156,7 +156,7 @@ ti (TypeEnv env) (EVar n) =
 ti env (ELit l) = tiLit env l
 ti env (EAbs n e) = nested $ do
   tr "TI called with" (EAbs n e)
-  tv <- newTypeVar "a"
+  tv <- newTypeVar "abs"
   tr "TI Tv =" tv
   let TypeEnv env' = remove env n
       env'' = TypeEnv (env' `Map.union` (Map.singleton
@@ -169,7 +169,7 @@ ti env (EAbs n e) = nested $ do
 
 ti env (EApp e1 e2) = nested $ do
   tr "TI called with" (env, (EApp e1 e2))
-  tv <- newTypeVar "a"
+  tv <- newTypeVar "app"
   tr "TI tv is" tv
   (s1,t1) <- ti env e1
   tr "TI e1 types: s1,t1 are" (s1,t1)
@@ -221,7 +221,7 @@ exprs =
 
 prettyResult :: (Exp, (Either String Type, TIState)) -> IO ()
 prettyResult (e,(t,st)) = do
-  putStrLn ("Expression " ++ show e ++  " typed as " ++ show t)
+  putStrLn ("\nExpression\n> " ++ show e ++  "\n typed as\n> " ++ show t)
   putStrLn "Inference log:"
   mapM_ putStrLn (tiLog st)
 
