@@ -159,7 +159,7 @@ ti (TypeEnv env) (EVar n) =
 ti env (ELit l) = tiLit env l
 ti env (EAbs n e) = nested $ do
   tr "T-ABS called with" (env, (EAbs n e))
-  tv <- newTypeVar "abs"
+  tv <- newTypeVar "a"
   tr "T-ABS Tv =" tv
   let TypeEnv env' = remove env n
       env'' = TypeEnv (env' `Map.union` (Map.singleton
@@ -172,7 +172,7 @@ ti env (EAbs n e) = nested $ do
 
 ti env (EApp e1 e2) = nested $ do
   tr "T-APP called with" (env, (EApp e1 e2))
-  tv <- newTypeVar "app"
+  tv <- newTypeVar "a"
   tr "T-APP tv is" tv
   (s1,t1) <- ti env e1
   tr "T-APP e1 types: s1,t1 are" (s1,t1)
@@ -190,7 +190,7 @@ ti env (EApp e1 e2) = nested $ do
 ti env (ELet x e1 In e2) = nested $ do
   tr "T-LET called with" (env,(ELet x e1 In e2))
   (s1,t1) <- ti env e1
-  tr "T-LET s,t for e1" (s1,t1)
+  tr "T-LET e1:s,t" (e1,s1,t1)
   let TypeEnv env' = remove env x
       t' = generalize (apply s1 env) t1
       env'' = TypeEnv (Map.insert x t' env')
@@ -222,10 +222,10 @@ tr s a = do
 exprs :: [Exp]
 exprs =
   [
-   ELet "f1" (EAbs "x"
-                     (ELet "f2" (EAbs "x" (EVar "x"))
-                     In (EApp (EVar "f2") (ELit (LInt 3)))) )
-     In (EApp (EVar "f1") (ELit (LBool True)))
+   ELet "outer" (EAbs "x"
+                     (ELet "inner" (EAbs "x" (EVar "x"))
+                     In (EApp (EVar "inner") (ELit (LInt 2)))) )
+     In (EApp (EVar "outer") (ELit (LBool True)))
 
  ]
         -- ELet "id" (EAbs "x" (EVar "x")) (EVar "id")
