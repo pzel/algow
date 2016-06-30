@@ -79,15 +79,17 @@ generalize env t = Scheme vars t
 data TIEnv = TIEnv {}
 data TIState = TIState { tiSupply :: Int,
                          tiSubst :: Subst,
-                         tiLogDepth :: Int
+                         tiLogDepth :: Int,
+                         tiLog :: [String]
                        } deriving (Show)
 type TI a = ErrorT String (ReaderT TIEnv (StateT TIState IO)) a
 
 
 logDepth :: TI Int
-logDepth = do
-  s <- get
-  return (tiLogDepth s)
+logDepth = tiLogDepth <$> get
+
+putLogEntry :: String -> TI ()
+putLogEntry e = get >>= \s-> put s{tiLog= tiLog s ++ [e]}
 
 nested :: TI a -> TI a
 nested a = push >> a >>= \res -> pop >> return res
@@ -102,7 +104,7 @@ runTI t = do
               initTIState
   return (res,st)
   where initTIEnv = TIEnv{}
-        initTIState = TIState 0 nullSubst 0
+        initTIState = TIState 0 nullSubst 0 []
 
 newTypeVar :: String -> TI Type
 newTypeVar prefix = do
@@ -201,7 +203,7 @@ runInference exp = runTI (typeInference (Map.empty) exp)
 tr :: (Show a) => String -> a -> TI ()
 tr s a = do
   depth <- logDepth
-  liftIO . traceIO . (prefix depth ++) . clearQuotes . ((s  ++ " ") ++) . show $ a
+  putLogEntry . (prefix depth ++) . clearQuotes . ((s  ++ " ") ++) . show $ a
  where clearQuotes = filter (/= '"')
        prefix d = take d (repeat ' ')
 
@@ -217,9 +219,15 @@ exprs =
         -- , EApp (EAbs "x" (EVar "x")) (ELit (LInt 2))
         -- ]
 
+prettyResult :: (Exp, (Either String Type, TIState)) -> IO ()
+prettyResult (e,(t,st)) = do
+  putStrLn ("Expression " ++ show e ++  " typed as " ++ show t)
+  putStrLn "Inference log:"
+  mapM_ putStrLn (tiLog st)
+
 main = do
   x <- mapM (\e -> runInference e >>= return . (e,) ) exprs
-  mapM_ (putStrLn . show) (map (\(e,(t,_)) -> (e,t)) x)
+  mapM_ prettyResult x
 
 
 
