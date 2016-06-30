@@ -16,18 +16,19 @@ data Exp = EVar String
          | ELit Lit
          | EApp Exp Exp
          | EAbs String Exp
-         | ELet String Exp Exp
-         deriving (Eq,Ord,Show)
+         | ELet String Exp In Exp
+         deriving (Show)
+data In = In deriving (Show)
 
 data Lit = LInt Integer
          | LBool Bool
-         deriving (Eq,Ord,Show)
+         deriving (Show)
 
 data Type = TVar String
           | TInt
           | TBool
           | TFun Type Type
-         deriving (Eq,Ord,Show)
+         deriving (Eq,Show)
 
 data Scheme = Scheme [String] Type deriving (Show)
 type Subst = Map String Type
@@ -84,7 +85,6 @@ data TIState = TIState { tiSupply :: Int,
                        } deriving (Show)
 type TI a = ErrorT String (ReaderT TIEnv (StateT TIState IO)) a
 
-
 logDepth :: TI Int
 logDepth = tiLogDepth <$> get
 
@@ -113,9 +113,12 @@ newTypeVar prefix = do
   return (TVar (prefix ++ show (tiSupply s)))
 
 instantiate :: Scheme -> TI Type
-instantiate (Scheme vars t) = do
+instantiate (Scheme vars t) = nested $ do
+  tr "INST " (Scheme vars t)
   nvars <- mapM (const (newTypeVar "a")) vars
   let s = Map.fromList (zip vars nvars)
+  tr "INST new subst" s
+  tr "INST returns subst applied to t" (apply s t)
   return (apply s t)
 
 mgu :: Type -> Type -> TI Subst
@@ -155,41 +158,50 @@ ti (TypeEnv env) (EVar n) =
     (Just sigma) -> instantiate sigma >>= \t -> return (nullSubst, t)
 ti env (ELit l) = tiLit env l
 ti env (EAbs n e) = nested $ do
-  tr "TI called with" (EAbs n e)
+  tr "T-ABS called with" (env, (EAbs n e))
   tv <- newTypeVar "abs"
-  tr "TI Tv =" tv
+  tr "T-ABS Tv =" tv
   let TypeEnv env' = remove env n
       env'' = TypeEnv (env' `Map.union` (Map.singleton
                                             n (Scheme [] tv)))
-  tr "TI shadowed env" env''
+  tr "T-ABS shadowed env" env''
   (s1,t1) <- ti env'' e
-  tr "TI returns type for Abs:" (TFun (apply s1 tv) t1)
-  tr "TI returns subst for Abs:" s1
+  tr "T-ABS returns type for Abs:" (TFun (apply s1 tv) t1)
+  tr "T-ABS returns subst for Abs:" s1
   return (s1, TFun (apply s1 tv) t1)
 
 ti env (EApp e1 e2) = nested $ do
-  tr "TI called with" (env, (EApp e1 e2))
+  tr "T-APP called with" (env, (EApp e1 e2))
   tv <- newTypeVar "app"
-  tr "TI tv is" tv
+  tr "T-APP tv is" tv
   (s1,t1) <- ti env e1
-  tr "TI e1 types: s1,t1 are" (s1,t1)
+  tr "T-APP e1 types: s1,t1 are" (s1,t1)
   (s2,t2) <- ti (apply s1 env) e2
-  tr "TI app s1 env is" (apply s1 env)
-  tr "TI e2 types: s2,t2 are" (s2,t2)
+  tr "T-APP app s1 env is" (apply s1 env)
+  tr "T-APP e2 types: s2,t2 are" (s2,t2)
   s3 <- mgu (apply s2 t1) (TFun t2 tv)
-  tr "TI app s2 t1" (apply s2 t1)
-  tr "TI TFun t2 tv" (TFun t2 tv)
-  tr "TI S3" s3
-  tr "TI returns subst" (s3 <.> s2 <.> s1)
-  tr ("TI returns " ++show tv ++ ":") (apply s3 tv)
+  tr "T-APP app s2 t1" (apply s2 t1)
+  tr "T-APP TFun t2 tv" (TFun t2 tv)
+  tr "T-APP S3" s3
+  tr "T-APP returns subst" (s3 <.> s2 <.> s1)
+  tr ("T-APP returns " ++show tv ++ ":") (apply s3 tv)
   return (s3 <.> s2 <.> s1, apply s3 tv)
 
-ti env (ELet x e1 e2) = do
+ti env (ELet x e1 In e2) = nested $ do
+  tr "T-LET called with" (env,(ELet x e1 In e2))
   (s1,t1) <- ti env e1
+  tr "T-LET s,t for e1" (s1,t1)
   let TypeEnv env' = remove env x
       t' = generalize (apply s1 env) t1
       env'' = TypeEnv (Map.insert x t' env')
+  tr "T-LET cleaned env" env'
+  tr "T-LET generalized t for t1" t'
+  tr "T-LET env for e2" env''
+  tr "T-LET env for e2/w subst" (apply s1 env'')
   (s2,t2) <- ti (apply s1 env'') e2
+  tr "T-LET env final subst,type for e2" (s2,t2)
+  tr "T-LET returns subst" (s1 <.> s2)
+  tr "T-LET returns type" t2
   return (s1 <.> s2, t2)
 
 typeInference :: Map String Scheme -> Exp -> TI Type
@@ -205,14 +217,17 @@ tr s a = do
   depth <- logDepth
   putLogEntry . (prefix depth ++) . clearQuotes . ((s  ++ " ") ++) . show $ a
  where clearQuotes = filter (/= '"')
-       prefix d = take d (repeat ' ')
+       prefix d = take (d*2) (repeat ' ')
 
 exprs :: [Exp]
 exprs =
   [
-   EApp (EAbs "x" (EVar "x")) (ELit (LInt 3))
+   ELet "f1" (EAbs "x"
+                     (ELet "f2" (EAbs "x" (EVar "x"))
+                     In (EApp (EVar "f2") (ELit (LInt 3)))) )
+     In (EApp (EVar "f1") (ELit (LBool True)))
 
-  ]
+ ]
         -- ELet "id" (EAbs "x" (EVar "x")) (EVar "id")
         -- , ELet "id" (EAbs "x" (EVar "x"))
         --     (EApp (EVar "id") (EVar "id"))
@@ -228,8 +243,3 @@ prettyResult (e,(t,st)) = do
 main = do
   x <- mapM (\e -> runInference e >>= return . (e,) ) exprs
   mapM_ prettyResult x
-
-
-
-
-
