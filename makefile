@@ -1,8 +1,9 @@
-.PHONY: clean run
+.PHONY: all hs erl
 
-run:	clean AlgoW.hs
-	ghc --make -fno-warn-warnings-deprecations ./AlgoW.hs -o AlgoW && ./AlgoW
+all: hs erl
 
-clean:
-	rm -f *.hi *.o AlgoW
+hs:
+	cd hs; make
 
+erl:
+	cd erl; make
