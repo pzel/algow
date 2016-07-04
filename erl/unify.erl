@@ -10,44 +10,62 @@ run() ->
 all_test_() ->
   [
    ?_assertMatch({_,true},
-                 pp_unify(bind(empty_env(), b, c), a, b)),
+                 do_ti([
+                        lunify(b,c),
+                        lpp_unify(a,b)
+                       ])),
 
    ?_assertMatch({_,false},
-                 begin
-                   E0 = bind(empty_env(), b, {int, []}),
-                   E1 = bind(E0, a, {bool, []}),
-                   pp_unify(E1, a, b) end),
+                 do_ti([
+                        lunify(b, {int, []}),
+                        lunify(a, {bool, []}),
+                        lpp_unify(a, b)
+                       ])),
 
    ?_assertMatch({_,true},
-                 begin
-                   E0 = bind(empty_env(), b, {list, [c]}),
-                   E1 = bind(E0, a, c),
-                   pp_unify(E1, {list, [a]}, b) end),
+                 do_ti([
+                        lunify(b, {list, [c]}),
+                        lunify(a, c),
+                        lpp_unify({list, [a]}, b)
+                       ])),
 
    ?_assertMatch({_,true},
-                 begin
-                   E0 = bind(empty_env(), b, {pair, [b, a]}),
-                   pp_unify(E0, a, b) end),
+                 do_ti([
+                        lunify(b, {pair, [b, a]}),
+                        lpp_unify(a, b)
+                       ])),
 
    %% Unification IV: Another Recursive Type
    ?_assertMatch({_, true},
-                 begin
-                   E0 = bind(empty_env(), b, {pair, [b,a]}),
-                   E1 = bind(E0, d, {pair, [d, {pair, [d,c]}]}),
-                   pp_unify(E1, a, c) end),
+                 do_ti([
+                        lunify(b, {pair, [b,a]}),
+                        lunify(d, {pair, [d, {pair, [d,c]}]}),
+                        lpp_unify(a, c)
+                       ])),
 
-   ?_assertMatch({[{{int, []}, [{bool, []}]}|_], % the final, unsound binding
-                  false},
-                 begin
-                   E0 = bind(empty_env(), f, {arr, [a,b]}),
-                   E1 = bind(E0,          g, {arr, [a,c]}),
-                   E2 = bind(E1,          a, {int, []}),
-                   E3 = bind(E2,          c, {bool, []}),
-                   {E4, true} = unify(E3, f, g),
-                   %% since f ~ g, then b ~ c : bool
-                   pp_unify(E4,           b, {int, []}) end)
+   ?_assertMatch({ [{{int, []}, [{bool, []}]}|_ ],
+                   false},
+                 do_ti([lunify(f, {arr, [a,b]}),
+                        lunify(g, {arr, [a,c]}),
+                        lunify(a, {int, []}),
+                        lunify(c, {bool, []}),
+                        lunify(f, g),
+                        %% since f ~ g, then b ~ c : bool
+                        lpp_unify(b, {int, []})
+                       ]))
 
   ].
+
+ti_step(_Stmt, {Env, false}) -> {Env, false};
+ti_step(Stmt, {Env, true}) -> Stmt(Env);
+ti_step(V,X) -> error([V,X]).
+
+do_ti(Stmts) when is_list(Stmts) ->
+  lists:foldl(fun ti_step/2, {empty_env(), true}, Stmts).
+lift(Fun, A1, A2) -> fun(Env) -> Fun(Env, A1, A2) end.
+lunify(L,R) -> lift(fun unify/3, L, R).
+lpp_unify(L,R) -> lift(fun pp_unify/3, L, R).
+
 
 empty_env() -> dict:new().
 
