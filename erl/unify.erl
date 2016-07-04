@@ -1,13 +1,26 @@
 -module(unify).
 -export([run/0]).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
 % Based on https://inst.eecs.berkeley.edu/~cs164/sp11/lectures/lecture22.pdf
 
-empty_env() -> dict:new().
-
 run() ->
-  E0 = bind(empty_env(), b, c),
-  E1 = bind(E0, c, c),
-  unify(E1, a, b).
+  eunit:test(?MODULE).
+
+all_test_() ->
+  [
+   ?_assertEqual(true, unify(bind(empty_env(), b, c), a, b)),
+   ?_assertEqual(false, begin
+                         E0 = bind(empty_env(), b, {int, []}),
+                         E1 = bind(E0, a, {bool, []}),
+                         unify(E1, a, b) end),
+   ?_assertEqual(true, begin
+                         E0 = bind(empty_env(), b, {list, [c]}),
+                         E1 = bind(E0, a, c),
+                         unify(E1, {list, [a]}, b) end)
+  ].
+
+empty_env() -> dict:new().
 
 unify(Env, TEA, TEB) ->
   catch(begin
@@ -22,15 +35,19 @@ unify(Env, TEA, TEB) ->
             true -> throw(true); _ -> cont end,
           case {TA,TB} of
             {{_TCons, LExprs}, {_TCons, RExprs}} ->
-              throw(all_true(zip_unify(Env, LExprs, RExprs)));
-            _ -> throw(false) end
+              zip_unify(Env, LExprs, RExprs);
+            _ ->
+              throw(false) end
         end).
 
-all_true(L) -> lists:all(fun(X) -> X == true end, L).
-
-zip_unify(Env, [A,As], [B, Bs]) ->
-  case unify(
-
+zip_unify(Env, [L|Ls], [R|Rs]) ->
+  case unify(Env, L, R) of
+    true -> zip_unify(Env, Ls, Rs);
+    false -> false end;
+zip_unify(_, [], []) ->
+  true;
+zip_unify(_,_,_) ->
+  false.
 
 bind(Env, Left, Right) ->
   if (Left == Right) -> Env;

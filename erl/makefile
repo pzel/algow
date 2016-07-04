@@ -1,4 +1,5 @@
 .PHONY: clean aw unify
+all: unify
 
 aw: clean
 	erlc aw.erl
