@@ -51,13 +51,21 @@ unify(Env, TEA, TEB) ->
 do_unify(Env, TEA, TEB) ->
   TA = binding_of(Env, TEA),
   TB = binding_of(Env, TEB),
-  case TA =:= TB of true -> return(Env, true); _ -> cont end,
+
+  case TA =:= TB of
+    true -> return(Env, true);
+    _ -> cont end,
+
   case is_tvar(TA) of
     true -> return(bind(Env, TA, TB), true);
     _ -> cont end,
+
   E1 = bind(Env, TB, TA),
+
   case is_tvar(TB) of
-    true -> return(E1,true); _ -> cont end,
+    true -> return(E1,true);
+    _ -> cont end,
+
   case {TA,TB} of
     {{_TCons, LExprs}, {_TCons, RExprs}} ->
       return(zip_unify(E1, LExprs, RExprs));
