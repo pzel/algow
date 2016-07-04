@@ -34,7 +34,19 @@ all_test_() ->
                  begin
                    E0 = bind(empty_env(), b, {pair, [b,a]}),
                    E1 = bind(E0, d, {pair, [d, {pair, [d,c]}]}),
-                   pp_unify(E1, a, c) end)
+                   pp_unify(E1, a, c) end),
+
+   ?_assertMatch({[{{int, []}, [{bool, []}]}|_], % the final, unsound binding
+                  false},
+                 begin
+                   E0 = bind(empty_env(), f, {arr, [a,b]}),
+                   E1 = bind(E0,          g, {arr, [a,c]}),
+                   E2 = bind(E1,          a, {int, []}),
+                   E3 = bind(E2,          c, {bool, []}),
+                   {E4, true} = unify(E3, f, g),
+                   %% since f ~ g, then b ~ c : bool
+                   pp_unify(E4,           b, {int, []}) end)
+
   ].
 
 empty_env() -> dict:new().
@@ -60,7 +72,7 @@ do_unify(Env, TEA, TEB) ->
     true -> return(bind(Env, TA, TB), true);
     _ -> cont end,
 
-  E1 = bind(Env, TB, TA),
+  E1 = bind(Env, TB, TA), % this may produce an unsound binding
 
   case is_tvar(TB) of
     true -> return(E1,true);
@@ -69,7 +81,7 @@ do_unify(Env, TEA, TEB) ->
   case {TA,TB} of
     {{_TCons, LExprs}, {_TCons, RExprs}} ->
       return(zip_unify(E1, LExprs, RExprs));
-    _ ->
+    _ ->  % the unsound binding will bubble up here
       return(E1,false) end.
 
 return({Env, Val}) -> throw({Env, Val}).
