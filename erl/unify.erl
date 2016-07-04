@@ -56,16 +56,20 @@ all_test_() ->
 
   ].
 
-ti_step(_Stmt, {Env, false}) -> {Env, false};
-ti_step(Stmt, {Env, true}) -> Stmt(Env);
-ti_step(V,X) -> error([V,X]).
-
+%% Environment book-keeping
 do_ti(Stmts) when is_list(Stmts) ->
   lists:foldl(fun ti_step/2, {empty_env(), true}, Stmts).
-lift(Fun, A1, A2) -> fun(Env) -> Fun(Env, A1, A2) end.
+
+ti_step(_Stmt, {Env, false}) -> {Env, false};
+ti_step({ti_stmt,Fun}, {Env, true}) -> Fun(Env);
+ti_step(V,X) -> error({runtime_error, [V,X]}).
+
+lift(Fun, A1, A2) -> {ti_stmt, fun(Env) -> Fun(Env, A1, A2) end}.
 lunify(L,R) -> lift(fun unify/3, L, R).
 lpp_unify(L,R) -> lift(fun pp_unify/3, L, R).
 
+
+%% Implementation
 
 empty_env() -> dict:new().
 
