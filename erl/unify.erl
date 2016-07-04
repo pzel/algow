@@ -9,45 +9,65 @@ run() ->
 
 all_test_() ->
   [
-   ?_assertEqual(true, unify(bind(empty_env(), b, c), a, b)),
-   ?_assertEqual(false, begin
-                         E0 = bind(empty_env(), b, {int, []}),
-                         E1 = bind(E0, a, {bool, []}),
-                         unify(E1, a, b) end),
-   ?_assertEqual(true, begin
-                         E0 = bind(empty_env(), b, {list, [c]}),
-                         E1 = bind(E0, a, c),
-                         unify(E1, {list, [a]}, b) end)
+   ?_assertMatch({_,true},
+                 pp_unify(bind(empty_env(), b, c), a, b)),
+
+   ?_assertMatch({_,false},
+                 begin
+                   E0 = bind(empty_env(), b, {int, []}),
+                   E1 = bind(E0, a, {bool, []}),
+                   pp_unify(E1, a, b) end),
+
+   ?_assertMatch({_,true},
+                 begin
+                   E0 = bind(empty_env(), b, {list, [c]}),
+                   E1 = bind(E0, a, c),
+                   pp_unify(E1, {list, [a]}, b) end),
+
+   ?_assertMatch({_,true},
+                 begin
+                   E0 = bind(empty_env(), b, {pair, [b, a]}),
+                   pp_unify(E0, a, b) end)
   ].
 
 empty_env() -> dict:new().
 
+pp_unify(Env, TEA, TEB) ->
+  {FinalEnv, Val} = unify(Env, TEA, TEB),
+  {dict:to_list(FinalEnv), Val}.
+
 unify(Env, TEA, TEB) ->
-  catch(begin
-          TA = binding_of(Env, TEA),
-          TB = binding_of(Env, TEB),
-          case TA =:= TB of true -> throw(true); _ -> cont end,
-          case is_tvar(TA) of
-            true -> bind(Env, TA, TB), throw(true);
-            _ -> cont end,
-          bind(Env, TB, TA),
-          case is_tvar(TB) of
-            true -> throw(true); _ -> cont end,
-          case {TA,TB} of
-            {{_TCons, LExprs}, {_TCons, RExprs}} ->
-              zip_unify(Env, LExprs, RExprs);
-            _ ->
-              throw(false) end
-        end).
+  case (catch(do_unify(Env, TEA, TEB))) of
+    {Env1, Val} -> {Env1, Val};
+    E -> error({runtime_error, E}) end.
+
+do_unify(Env, TEA, TEB) ->
+  TA = binding_of(Env, TEA),
+  TB = binding_of(Env, TEB),
+  case TA =:= TB of true -> return(Env, true); _ -> cont end,
+  case is_tvar(TA) of
+    true -> return(bind(Env, TA, TB), true);
+    _ -> cont end,
+  E1 = bind(Env, TB, TA),
+  case is_tvar(TB) of
+    true -> return(E1,true); _ -> cont end,
+  case {TA,TB} of
+    {{_TCons, LExprs}, {_TCons, RExprs}} ->
+      return(zip_unify(E1, LExprs, RExprs));
+    _ ->
+      return(E1,false) end.
+
+return({Env, Val}) -> throw({Env, Val}).
+return(Env, Val) -> throw({Env, Val}).
 
 zip_unify(Env, [L|Ls], [R|Rs]) ->
   case unify(Env, L, R) of
-    true -> zip_unify(Env, Ls, Rs);
-    false -> false end;
-zip_unify(_, [], []) ->
-  true;
-zip_unify(_,_,_) ->
-  false.
+    {E1, true} -> zip_unify(E1, Ls, Rs);
+    Other -> Other end;
+zip_unify(Env, [], []) ->
+  {Env, true};
+zip_unify(Env,_,_) ->
+  {Env, false}.
 
 bind(Env, Left, Right) ->
   if (Left == Right) -> Env;
