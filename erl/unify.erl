@@ -27,7 +27,14 @@ all_test_() ->
    ?_assertMatch({_,true},
                  begin
                    E0 = bind(empty_env(), b, {pair, [b, a]}),
-                   pp_unify(E0, a, b) end)
+                   pp_unify(E0, a, b) end),
+
+   %% Unification IV: Another Recursive Type
+   ?_assertMatch({_, true},
+                 begin
+                   E0 = bind(empty_env(), b, {pair, [b,a]}),
+                   E1 = bind(E0, d, {pair, [d, {pair, [d,c]}]}),
+                   pp_unify(E1, a, c) end)
   ].
 
 empty_env() -> dict:new().
